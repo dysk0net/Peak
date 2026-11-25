@@ -1,7 +1,8 @@
 # ReplicantPeak
 
-[![CI](https://github.com/DanimanX/ReplicantPeak/actions/workflows/ci.yml/badge.svg)](https://github.com/DanimanX/ReplicantPeak/actions/workflows/ci.yml)
-[![Release](https://github.com/DanimanX/ReplicantPeak/actions/workflows/release.yml/badge.svg)](https://github.com/DanimanX/ReplicantPeak/actions/workflows/release.yml)
+[![CI](https://github.com/dysk0net/Peak/actions/workflows/ci.yml/badge.svg)](https://github.com/dysk0net/Peak/actions/workflows/ci.yml)
+[![VST3](https://github.com/dysk0net/Peak/actions/workflows/vst3.yml/badge.svg)](https://github.com/dysk0net/Peak/actions/workflows/vst3.yml)
+[![Release](https://github.com/dysk0net/Peak/actions/workflows/release.yml/badge.svg)](https://github.com/dysk0net/Peak/actions/workflows/release.yml)
 
 ![ReplicantPeak panel](assets/panel.png)
 
@@ -14,7 +15,8 @@ ARM Cortex-M4 microcontroller code via an integrated Unicorn-based hardware
 emulator that drives the authentic 256×64 OLED display panel, voice activity LEDs,
 and parameter states.
 
-- **Status**: v1.0.8, Standalone Synthesizer Application, VST3 & CLAP bundles, persistent firmware link.
+- **Status**: v1.1.0, Standalone Synthesizer Application, VST3 & CLAP bundles, persistent firmware link, one-click Windows firmware search.
+- **Fork**: this is a fork of [DanimanX/ReplicantPeak](https://github.com/DanimanX/ReplicantPeak) (MIT, copyright notice kept in [LICENSE](LICENSE)). What this fork adds is listed in the [changelog](CHANGELOG.md).
 - **Demo Video**: [Cyberpunk / Blade Runner Video Demonstration](assets/cyberpunk_blade_runner_demo.mp4) (46s Full HD).
 - **License**: MIT for the code. The firmware is not included and not covered by
   that license (see [Firmware](#firmware)).
@@ -176,6 +178,21 @@ ReplicantPeak-<version>-<os>-standalone.zip
 Unzip and copy the plugin bundle into your DAW's plugin directory, or extract and run the
 **Standalone** application directly to play the synth without needing a DAW.
 
+### Getting the Windows VST3
+
+Every push to `main` runs the **VST3** workflow (Actions tab → *VST3* → latest
+run → Artifacts), which builds the plugin on a Windows runner and uploads
+`ReplicantPeak-<version>-windows-vst3.zip`. It can also be started by hand with
+*Run workflow*. Unzip it and copy `ReplicantPeak.vst3` into
+`C:\Program Files\Common Files\VST3`.
+
+Building it yourself on Windows:
+
+```
+cargo xtask bundle peak-plugin --release
+# -> target\bundled\ReplicantPeak.vst3
+```
+
 ### Running Standalone
 
 To run the standalone synthesizer directly:
@@ -203,7 +220,11 @@ The plugin starts locked and silent. Linking the Peak firmware `.syx` unlocks
 it:
 
 - drag the file onto the panel, or
-- type its path into the lock screen field, or
+- type or paste its path into the lock screen field (the quotes Windows adds with
+  "Copy as path" are stripped), or
+- on Windows, press **FIND FIRMWARE ON THIS PC**: it opens an Explorer search for
+  `peak*.syx` across your user folder, and you then drag the file it finds onto the
+  panel or paste its path, or
 - set `PEAK_FIRMWARE=/path/to/firmware.syx` for the standalone panel.
 
 MIDI note input is declared by the plugin (`MidiConfig::Basic`), so hosts

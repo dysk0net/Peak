@@ -72,6 +72,17 @@ pub trait PanelHost {
     /// Same, for a file dropped onto the panel.
     fn link_bytes(&mut self, name: &str, bytes: &[u8]);
 
+    /// Whether this host can offer to search the machine for the firmware
+    /// image. The locked panel only draws its search button when this is true.
+    fn can_search_firmware(&self) -> bool {
+        crate::search::search_supported()
+    }
+    /// Open the operating system's file search for the firmware image (a
+    /// Windows Explorer search window). Must not block.
+    fn search_for_firmware(&mut self) -> Result<(), String> {
+        crate::search::open_firmware_search()
+    }
+
     /// One cycle of the current oscillator shape, for the scope.
     fn scope_wave(&self) -> Vec<f32>;
     /// The five wavetable columns for the per-oscillator viewer. Empty when no

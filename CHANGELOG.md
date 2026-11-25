@@ -3,6 +3,32 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.1.0] — 2026-11-25
+
+First release of the `dysk0net/Peak` fork of ReplicantPeak 1.0.8.
+
+### Added
+
+- **Find the firmware from the lock screen (Windows).** While no firmware is
+  linked, the "FIRMWARE LINK REQUIRED" card shows a **FIND FIRMWARE ON THIS PC**
+  button. It opens an Explorer search (`search-ms:`) for `peak*.syx`, which
+  matches both `peak-firmware-*.syx` and `peak-fpga-*.syx`, across the user's
+  profile folder. The button is not drawn on other platforms, and never once a
+  firmware image is linked, because the lock card itself is gone by then.
+  - New `peak_ui::search` module; `PanelHost` gains `can_search_firmware()` and
+    `search_for_firmware()` with default implementations, so existing hosts
+    need no change.
+  - Explorer is started by absolute path (`%SystemRoot%\explorer.exe`), not by
+    name, so a plugin hosted in a DAW never resolves it from the host's folder.
+- **VST3 workflow** (`.github/workflows/vst3.yml`): builds the Windows VST3 on
+  every push to `main` and on demand, and uploads it as a zip artifact.
+
+### Fixed
+
+- A path pasted into the lock-screen field with surrounding quotes, which is
+  what Explorer's "Copy as path" produces, is now accepted instead of failing
+  to open.
+
 ## [1.0.8] — 2026-10-24
 
 ### Added

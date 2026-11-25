@@ -6,6 +6,7 @@
 
 pub mod host;
 pub mod panel;
+pub mod search;
 pub mod theme;
 pub mod widgets;
 

@@ -10,12 +10,12 @@ members = [
 ]
 
 [workspace.package]
-version = "1.0.8"
+version = "1.1.0"
 edition = "2021"
 rust-version = "1.80"
 license = "MIT"
 authors = ["DanimanX"]
-repository = "https://github.com/DanimanX/ReplicantPeak"
+repository = "https://github.com/dysk0net/Peak"
 
 [workspace.dependencies]
 peak-core = { path = "crates/peak-core" }

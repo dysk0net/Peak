@@ -8,7 +8,9 @@
 // vst3-sys' vtable macro emits a trailing semicolon in expression position. The
 // lint fires inside the upstream expansion, so it cannot be fixed here;
 // allowing it keeps `clippy -D warnings` meaningful for the rest of the crate.
-#![allow(semicolon_in_expressions_from_non_local_macros)]
+// (The lint was renamed from `..._from_non_local_macros`; the old name is an
+// error under `-D warnings` on current compilers.)
+#![allow(semicolon_in_expressions_from_macros)]
 
 mod params;
 

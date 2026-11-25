@@ -1,0 +1,54 @@
+name: VST3
+
+# Builds the plugin as a VST3 on a Windows runner and uploads it as a zip, so a
+# working Windows build is one click away without cutting a release. Releases
+# (tags) are still handled by release.yml, which attaches every format for every
+# platform.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: vst3-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  vst3-windows:
+    name: VST3 (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build bundles
+        run: cargo xtask bundle peak-plugin --release
+
+      - name: Package the VST3
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          py="$(command -v python3 || command -v python)"
+          "$py" scripts/package-bundles.py \
+            --bundled target/bundled \
+            --out dist \
+            --os windows \
+            --version "$version"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ReplicantPeak-${{ env.VERSION }}-windows-vst3
+          path: dist/ReplicantPeak-${{ env.VERSION }}-windows-vst3.zip
+          if-no-files-found: error
+          retention-days: 30

@@ -1563,7 +1563,7 @@ fn gate(ui: &mut Ui, host: &mut dyn PanelHost, state: &mut PanelState, panel: Re
     let clicked = widgets::neon_button(ui, button, "LINK", CYAN, false).clicked();
     let submitted = ui.input(|i| i.key_pressed(egui::Key::Enter));
     if clicked || (submitted && !state.path_input.trim().is_empty()) {
-        let path = state.path_input.trim().to_string();
+        let path = clean_pasted_path(&state.path_input);
         if path.is_empty() {
             state.gate_error = Some("empty path".into());
         } else {
@@ -1610,6 +1610,30 @@ fn gate(ui: &mut Ui, host: &mut dyn PanelHost, state: &mut PanelState, panel: Re
         }
     }
 
+    // Search the machine for the image. Only offered where the host can do it
+    // (Windows Explorer search), and only here: this card is drawn solely while
+    // no firmware is linked.
+    if host.can_search_firmware() {
+        let find =
+            Rect::from_center_size(pos2(card.center().x, card.top() + 285.0), vec2(300.0, 26.0));
+        if widgets::neon_button(ui, find, "FIND FIRMWARE ON THIS PC", AMBER, false).clicked() {
+            match host.search_for_firmware() {
+                Ok(()) => state.gate_error = None,
+                Err(err) => state.gate_error = Some(err),
+            }
+        }
+        painter.text(
+            pos2(card.center().x, card.top() + 304.0),
+            Align2::CENTER_TOP,
+            format!(
+                "opens Windows search for {}  \u{00b7}  then drop the file here",
+                crate::search::FIRMWARE_SEARCH_PATTERN
+            ),
+            FontId::monospace(7.5),
+            with_alpha(DIM, 0.85),
+        );
+    }
+
     painter.text(
         pos2(card.center().x, card.bottom() - 30.0),
         Align2::CENTER_TOP,
@@ -1618,6 +1642,16 @@ fn gate(ui: &mut Ui, host: &mut dyn PanelHost, state: &mut PanelState, panel: Re
         with_alpha(DIM, 0.75),
     );
     widgets::scanlines(&painter, card, 4.0, 0.06);
+}
+
+/// Tidy a path typed or pasted into the link field. Explorer's "Copy as path"
+/// wraps the path in double quotes, which is exactly what a user arriving from
+/// the firmware search will paste, and a quoted path never resolves.
+fn clean_pasted_path(raw: &str) -> String {
+    raw.trim()
+        .trim_matches(|c| c == '"' || c == '\'')
+        .trim()
+        .to_string()
 }
 
 /// Draw the panel at a fixed size and return the size it used, so hosts can set
@@ -1642,4 +1676,143 @@ pub fn install_style(ctx: &egui::Context) {
     style.visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, CYAN);
     style.spacing.item_spacing = vec2(6.0, 6.0);
     ctx.set_style(style);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::host::{FirmwareStamp, LinkStatus};
+    use peak_core::Patch;
+
+    /// A host with no firmware, counting how often the search button reached it.
+    struct LockedHost {
+        patch: Patch,
+        can_search: bool,
+        searches: usize,
+    }
+
+    impl LockedHost {
+        fn new(can_search: bool) -> Self {
+            Self {
+                patch: Patch::default(),
+                can_search,
+                searches: 0,
+            }
+        }
+    }
+
+    impl PanelHost for LockedHost {
+        fn value(&self, param: P) -> f32 {
+            self.patch.get(param)
+        }
+        fn set(&mut self, param: P, value: f32) {
+            self.patch.set(param, value);
+        }
+        fn firmware(&self) -> Option<FirmwareStamp> {
+            None
+        }
+        fn link_status(&self) -> LinkStatus {
+            LinkStatus::Idle
+        }
+        fn link_path(&mut self, _path: &str) {}
+        fn link_bytes(&mut self, _name: &str, _bytes: &[u8]) {}
+        fn can_search_firmware(&self) -> bool {
+            self.can_search
+        }
+        fn search_for_firmware(&mut self) -> Result<(), String> {
+            self.searches += 1;
+            Ok(())
+        }
+        fn scope_wave(&self) -> Vec<f32> {
+            Vec::new()
+        }
+        fn active_voices(&self) -> usize {
+            0
+        }
+        fn max_voices(&self) -> usize {
+            8
+        }
+        fn preset_name(&self) -> String {
+            self.patch.name.clone()
+        }
+    }
+
+    fn frame(
+        ctx: &egui::Context,
+        host: &mut LockedHost,
+        state: &mut PanelState,
+        events: Vec<egui::Event>,
+    ) {
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1180.0, 820.0))),
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE)
+                .show(ctx, |ui| show(ui, host, state));
+        });
+    }
+
+    /// Click the centre of the locked card's search button: three frames so the
+    /// widget is laid out, pressed and released the way a real pointer does it.
+    fn click_find_button(host: &mut LockedHost) {
+        let ctx = egui::Context::default();
+        let mut state = PanelState::new();
+        // The panel is drawn from (0, 0), so the card is centred on (590, 410)
+        // and the button sits 285 px below the card's top edge (410 - 180).
+        let at = pos2(590.0, 230.0 + 285.0);
+        frame(&ctx, host, &mut state, vec![]);
+        frame(
+            &ctx,
+            host,
+            &mut state,
+            vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ],
+        );
+        frame(
+            &ctx,
+            host,
+            &mut state,
+            vec![egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            }],
+        );
+    }
+
+    #[test]
+    fn locked_panel_search_button_reaches_the_host() {
+        let mut host = LockedHost::new(true);
+        click_find_button(&mut host);
+        assert_eq!(host.searches, 1);
+    }
+
+    #[test]
+    fn search_button_is_absent_when_the_host_cannot_search() {
+        let mut host = LockedHost::new(false);
+        click_find_button(&mut host);
+        assert_eq!(host.searches, 0);
+    }
+
+    #[test]
+    fn pasted_paths_lose_explorer_quotes() {
+        assert_eq!(
+            clean_pasted_path(r#"  "C:\Users\me\Downloads\peak-firmware-2.2-build2108.syx"  "#),
+            r"C:\Users\me\Downloads\peak-firmware-2.2-build2108.syx"
+        );
+        assert_eq!(clean_pasted_path("'/tmp/peak.syx'"), "/tmp/peak.syx");
+        assert_eq!(clean_pasted_path("/tmp/peak.syx"), "/tmp/peak.syx");
+        assert_eq!(clean_pasted_path("  "), "");
+    }
 }
