@@ -75,8 +75,8 @@ impl EmulatorApp {
                 // Update simulated voice activity based on instruction count / GPIO
                 let count = emu.get_instructions_count();
                 let active = ((count / 2000) % 8) as usize;
-                for i in 0..8 {
-                    self.voice_leds[i] = (i <= active) && (count > 0);
+                for (i, led) in self.voice_leds.iter_mut().enumerate() {
+                    *led = (i <= active) && (count > 0);
                 }
             }
         }
@@ -288,14 +288,13 @@ impl EmulatorApp {
         let x_pitch = 40.0_f32;
         let y_pitch = 40.0_f32;
 
-        for voice_idx in 0..8 {
+        for (voice_idx, &is_lit) in self.voice_leds.iter().enumerate() {
             let col = voice_idx % 4;
             let row = voice_idx / 4;
             let center = Pos2::new(
                 start_x + col as f32 * x_pitch,
                 start_y + row as f32 * y_pitch,
             );
-            let is_lit = self.voice_leds[voice_idx];
 
             painter.circle_filled(center, led_radius + 2.0_f32, Color32::from_rgb(30, 36, 42));
             painter.circle_stroke(
