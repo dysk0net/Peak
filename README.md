@@ -1,0 +1,304 @@
+# ReplicantPeak
+
+[![CI](https://github.com/DanimanX/ReplicantPeak/actions/workflows/ci.yml/badge.svg)](https://github.com/DanimanX/ReplicantPeak/actions/workflows/ci.yml)
+[![Release](https://github.com/DanimanX/ReplicantPeak/actions/workflows/release.yml/badge.svg)](https://github.com/DanimanX/ReplicantPeak/actions/workflows/release.yml)
+
+![ReplicantPeak panel](assets/panel.png)
+
+A three-oscillator wavetable synthesizer inspired by the Novation Peak, written
+in Rust and shipped as a **VST3 / CLAP / Standalone** synth application plus a standalone
+preview panel.
+
+The engine links genuine Peak firmware images (`.syx`), executing the STM32F429
+ARM Cortex-M4 microcontroller code via an integrated Unicorn-based hardware
+emulator that drives the authentic 256×64 OLED display panel, voice activity LEDs,
+and parameter states.
+
+- **Status**: v1.0.8, Standalone Synthesizer Application, VST3 & CLAP bundles, persistent firmware link.
+- **Demo Video**: [Cyberpunk / Blade Runner Video Demonstration](assets/cyberpunk_blade_runner_demo.mp4) (46s Full HD).
+- **License**: MIT for the code. The firmware is not included and not covered by
+  that license (see [Firmware](#firmware)).
+
+## What is inside
+
+- **Authentic Novation Peak OLED Display & Front Panel:**
+  - Monochrome 256×64 OLED display panel with live hardware emulation statistics,
+    patch metadata, CRT/OLED dot-matrix scanlines, and real-time visualizer.
+  - 8 physical Voice Activity LEDs that illuminate dynamically with glowing cyan halos
+    and white centers as notes sound.
+  - Dedicated front panel **VOLUME** knob (`-48.0 dB .. +6.0 dB`).
+  - Native **SysEx Preset Import** (`.syx`): load custom patches via drag & drop or the
+    in-display `IMPORT .SYX` button, bundled with the 10 Montfrooij `PeakDist03` presets.
+- **Active ARM Cortex-M4 Firmware Emulation:**
+  - Microcontroller emulation harness running the genuine firmware binary.
+  - STM32F4 MMIO virtual peripheral stubs for RCC, PWR, UART, GPIO, SPI, and SysTick.
+  - Thread-safe background stepping communicating with the plugin GUI and voice allocator.
+- **Cyberpunk wavetable scope per oscillator.** Each scope is a five-column
+  waterfall drawn as GPU-rasterised egui meshes, with neon gradients, a live
+  interpolated waveform and a phase marker. Drag a scope to sweep SHAPE; drag
+  the wave strip or scroll to change the table.
+- An 8-voice engine (up to 16) with three wavetable oscillators, noise, ring
+  modulation, a resonant state-variable filter with its own envelope, two LFOs
+  and a serial FX chain (distortion, chorus, delay, reverb).
+- **Peak-faithful voice architecture**: AHDSR envelopes with HOLD, per-voice
+  free-running LFOs with FADE and S&H, five-column wavetable SHAPE, LP/BP/HP
+  filters at 12 or 24 dB, Osc 3 audio-rate filter modulation, FM O1>O2 and
+  O2>O3, oscillator Drift/Diverge and a bandwidth-limited noise source.
+- 60 parameters shared by the engine, the host and the panel from a single
+  table, so the ranges cannot drift apart.
+- Firmware gate: without a valid image the plugin is silent and the editor
+  draws the locked panel.
+- Mip-mapped wavetable bank: 8 factory tables plus 4 user tables derived from
+  the SHA-256 of the linked firmware. Each table is a bank of five waveforms,
+  matching Peak's SHAPE model.
+
+## Crates
+
+- `crates/peak-core` — firmware validation, parameter table, wavetable bank and
+  the DSP engine. No GUI or plugin framework, so it can be tested and
+  benchmarked in isolation.
+- `crates/peak-ui` — the panel and the `PanelHost` trait, the only way the
+  interface talks to the outside world.
+- `crates/peak-plugin` — NIH-plug host adapter: parameters, editor,
+  allocation-free `process()`, firmware link persistence.
+- `crates/peak-panel` — binary that opens the same panel without an audio
+  device. It renders `assets/panel.png`.
+- `crates/peak-emulator` — ARM Cortex-M4 microcontroller emulator (Unicorn engine)
+  with STM32F4 MMIO peripheral stubs (RCC, PWR, GPIO, UART, SPI, SysTick) and an
+  interactive Novation Peak OLED display & 8-Voice LED hardware panel GUI.
+- `xtask` — plugin bundling (`cargo xtask bundle`).
+
+## Build and run
+
+Rust 1.80 or newer. On Linux the panel needs the usual X11/Wayland development
+headers for egui/winit.
+
+```
+cargo build -p peak-plugin      # the CLAP probe dlopens this cdylib
+cargo test --workspace          # unit & integration tests across all crates
+cargo run -p peak-panel         # open the panel (no audio)
+cargo run -p peak-emulator --bin emulate  # launch firmware emulator GUI (OLED + Voice LEDs)
+```
+
+Plugin:
+
+```
+cargo xtask bundle peak-plugin --release
+# bundles land in target/bundled/
+```
+
+README screenshot (needs `xvfb-run` when there is no display):
+
+```
+PEAK_PANEL_PRESET=3 scripts/screenshot.sh   # -> assets/panel.png (GLASS PAD)
+```
+
+## Firmware Emulator
+
+ReplicantPeak includes an ARM Cortex-M4 microcontroller emulator (`crates/peak-emulator`) powered by Unicorn Engine, capable of executing the genuine Novation Peak firmware image (`.syx`).
+
+- **SysEx Loader:** Extracts and decodes the 7-to-8 bit packed MIDI SysEx stream into the raw 249 KB binary payload.
+- **Memory Map:** Mapped to Flash at `0x08000000` and SRAM at `0x20000000`, with Cortex-M bit-band aliases at `0x42000000` / `0x22000000`.
+- **MMIO Peripherals:** Emulates STM32F4 hardware peripherals:
+  - RCC & PWR clock/voltage registers (handling HSE/PLL ready loops).
+  - USART6 & UART4 serial consoles.
+  - GPIOA through GPIOE with virtual control input injection and output pin monitoring.
+  - SPI1, SPI2, SPI3, SPI4 connected to the OLED display and Oxford FPGA.
+  - SysTick & timer tick generation for firmware delay loops.
+- **Hardware GUI:** An interactive egui dashboard featuring the authentic 256×64 OLED display, 8 Voice Activity LEDs, status LEDs, CPU controls, register viewer, live serial terminal, and real-time MMIO trace.
+
+```bash
+# Run with interactive GUI (OLED + Voice LEDs)
+cargo run -p peak-emulator --bin emulate
+
+# Run headless with execution trace (e.g. 100,000 instructions)
+cargo run -p peak-emulator --bin emulate -- --headless --steps 100000 --trace
+```
+
+## Presets
+
+The display holds the preset browser: `<` and `>` step through the bank and
+`STORE` writes the current parameters as a user preset. The bank is the 19
+factory presets (`INIT PATCH`, `PEAK BASS`, `WIDE SAW STACK`, `GLASS PAD`,
+`FM BELL`, `RING METAL`, `ACID LEAD`, `SUB PLUCK`, `NOISE SWEEP`,
+`WARM CHORDS`, `TAPE KEYS`, `HOLLOW FIFTHS`, `NEON SAW`, `FM GLASS`,
+`PULSE WIDTH`, `BANDPASS SCREAM`, `S&H VOID`, `HOLD ORGAN`, `DRIFT KEYS`)
+followed by whatever the user has saved. Loading a preset goes through the host
+as one parameter gesture per control, so it is captured by automation and undo
+like a knob move.
+
+User presets are JSON files in:
+
+- Linux: `$XDG_DATA_HOME/ReplicantPeak/presets` (or `~/.local/share/...`)
+- macOS: `~/Library/Application Support/ReplicantPeak/presets`
+- Windows: `%APPDATA%\ReplicantPeak\presets`
+
+**These are patches for this engine, not the Peak's factory bank.** We
+researched the free Peak banks while building this release (Novation's 1,000
+artist patches, the Anton Anru free packs, the dettenbach B+B demo, Patchstorage
+and PresetPatch). Their licences allow you to play them on a Peak, not to
+redistribute them inside another product, and Peak patch dumps are a
+proprietary binary format rather than documented JSON. So this release ships
+original patches and documents where to get the real free banks:
+[`docs/FREE_PATCHES.md`](docs/FREE_PATCHES.md). The architecture notes and
+citations behind the DSP changes are in
+[`docs/PEAK_FIDELITY.md`](docs/PEAK_FIDELITY.md).
+
+Novation ships its factory patches as a separate bank download in Components
+(see the 1.1 and 1.2 release notes in `firmware/release-notes/`), and the
+firmware `.syx` contains no patch records: its 7,784 messages are one 15-byte
+header plus 7,783 fixed 44-byte firmware frames (`F0 00 20 29 00 72 ... F7`),
+and a scan of the payload finds no preset names or parameter blocks — only code.
+
+## Plugin formats
+
+| Format | Linux | Windows | macOS |
+| --- | --- | --- | --- |
+| VST3 | yes | yes | yes |
+| CLAP | yes | yes | yes |
+| AU | — | — | not available |
+
+**Audio Unit is not offered, and that is a framework limit rather than a TODO.**
+NIH-plug (the pinned revision, and upstream today) only implements VST3 and CLAP
+wrappers; there is no AU export to call. Logic and other AU-only hosts can load
+the VST3 build through a wrapper. Adding real AU support means replacing the
+plugin adapter, not adding a CI leg, so the matrix deliberately has no AU entry.
+
+Every release is built on GitHub-hosted runners for all three platforms and
+attached as one archive per format:
+
+```
+ReplicantPeak-<version>-<os>-clap.zip
+ReplicantPeak-<version>-<os>-vst3.zip
+ReplicantPeak-<version>-<os>-standalone.zip
+```
+
+Unzip and copy the plugin bundle into your DAW's plugin directory, or extract and run the
+**Standalone** application directly to play the synth without needing a DAW.
+
+### Running Standalone
+
+To run the standalone synthesizer directly:
+
+```bash
+# Run standalone directly connecting to system audio & MIDI
+cargo run --release -p peak-plugin --bin peak-standalone
+
+# Or run the bundled executable
+cargo xtask bundle peak-plugin --release
+./target/bundled/ReplicantPeak
+```
+
+The standalone executable accepts CLI arguments to configure audio/MIDI backends (`--help`):
+- `-b, --backend <auto|jack|alsa|dummy>`
+- `-r, --sample-rate <48000>`
+- `-p, --period-size <512>`
+- `--input-device <DEVICE>` / `--output-device <DEVICE>`
+- `--midi-input <DEVICE>`
+- `--connect-jack-inputs <PORTS>` / `--connect-jack-midi-input <PORT>`
+
+## The firmware gate
+
+The plugin starts locked and silent. Linking the Peak firmware `.syx` unlocks
+it:
+
+- drag the file onto the panel, or
+- type its path into the lock screen field, or
+- set `PEAK_FIRMWARE=/path/to/firmware.syx` for the standalone panel.
+
+MIDI note input is declared by the plugin (`MidiConfig::Basic`), so hosts
+deliver notes, pitch bend and all-notes-off; a note-on with velocity 0 is
+treated as a note-off. Note events are applied at the start of each audio block
+rather than sample-accurately.
+
+Validation is strict: SysEx framing (`F0`…`F7`), Novation's manufacturer id
+`00 20 29`, product byte `0x71` (firmware) or `0x7C` (FPGA) and a minimum
+message count. The resulting SHA-256 is compared against the known-build table
+in `crates/peak-core/src/firmware.rs`, so the panel reports `VERIFIED` or
+`UNVERIFIED` instead of trusting a filename.
+
+The link path is persisted both across plugin instances (saved to user configuration
+as `firmware_path.txt`) and within DAW project session state. Any new plugin instance,
+new track, or reopened project relinks and revalidates in the background automatically
+without prompting or requiring the firmware file to be re-selected.
+
+## Firmware
+
+The `.syx` files are Focusrite/Novation property. They are not in this
+repository: `firmware/` is ignored by git, and every checkout fetches its own
+copy from the official channel with
+
+```
+scripts/fetch-firmware.sh          # downloads and verifies firmware 2.2 + FPGA 2.1
+scripts/fetch-firmware.sh --list   # Peak builds published in the catalogue
+```
+
+The script pins the catalogue ids and the expected SHA-256 of each image (the
+same hashes the engine knows), so a truncated or substituted download fails
+there instead of inside the plugin. It also writes `firmware/SHA256SUMS`, which
+can be rechecked at any time:
+
+```
+sha256sum -c firmware/SHA256SUMS
+```
+
+### How it was obtained
+
+The Components updater does not serve the binary from the app itself: the app
+fetches a public catalogue and then downloads the file by id.
+
+```
+GET https://components.novationmusic.com/api/v2/firmwares              # JSON catalogue, no auth
+GET https://components.novationmusic.com/api/v2/firmwares/155/file     # firmware v2.2
+GET https://components.novationmusic.com/api/v2/firmwares/142/file     # FPGA v2.1
+```
+
+Both responses are `302` redirects to a pre-signed S3 URL (valid for 7 days),
+with no cookies, tokens or device check. There was no need to emulate WebMIDI or
+a virtual Peak: the "connect the instrument" gate lives in the UI flow only, not
+in the file delivery.
+
+### What was verified
+
+- HTTP 200 after the signed redirect to `circuit-librarian.s3.eu-west-1.amazonaws.com`
+- Downloaded size == `Content-Length` (342,467 and 3,068,144 bytes)
+- Valid SysEx: Novation manufacturer id `00 20 29`, well-formed messages
+  (`F0`…`F7`), 0 framing errors, 100% 7-bit payload (7,784 messages in the
+  firmware, 4,679 in the FPGA)
+- All 10 Peak builds the catalogue serves were downloaded and their SHA-256
+  match `KNOWN_BUILDS`. The catalogue's v1.1/build 262 returns `500` and is
+  therefore absent from the table.
+- `sha256sum -c firmware/SHA256SUMS` revalidates at any time
+
+### Version pairing
+
+The catalogue only lists two FPGA families for the Peak: v2.0/build 439 and
+v2.1/build 469. The newest published FPGA is 2.1 (build 469), and the 2.2 notes
+announce no FPGA change, so the correct pair for v2.2 is **firmware 2108 +
+FPGA 469**. If your unit is on v1.x and you upgrade to v2.x, the FPGA has to be
+updated as well.
+
+### Installing on the hardware
+
+1. The usual way: connect the Peak over USB and use
+   <https://components.novationmusic.com> (Chrome/Edge, WebMIDI), which sends
+   these same `.syx` files.
+2. Manual: send the `.syx` as a SysEx dump over USB-MIDI (for example
+   `amidi -p hw:X,Y -s file.syx`, or SysEx Librarian / MIDI-OX), starting with
+   the FPGA if you are coming from v1.x and then the firmware. Do not interrupt
+   the transfer.
+3. After upgrading to v2.2, restart the unit if the panel controls do not
+   respond (as stated in the release notes).
+
+## Origin and date
+
+Catalogue queried on 2026-10-23 against `components.novationmusic.com`
+(frontend `1.72.5+1798590e`). Novation, Peak and Focusrite are trademarks of
+their respective owners; this project is neither affiliated with nor endorsed by
+them. The name and the panel layout are a tribute, not a replica of the
+hardware.
+
+## License
+
+MIT for the code; see [LICENSE](LICENSE). Downloaded firmware falls outside that
+license and remains Focusrite/Novation property.
