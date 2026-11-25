@@ -5,6 +5,7 @@
 //! from the host every frame, so the panel has no state of its own beyond the
 //! drag bookkeeping and the firmware field.
 
+use crate::browse::PickPoll;
 use crate::host::{Accent, LinkStatus, PanelHost, PanelState};
 use crate::theme::*;
 use crate::widgets;
@@ -1610,25 +1611,45 @@ fn gate(ui: &mut Ui, host: &mut dyn PanelHost, state: &mut PanelState, panel: Re
         }
     }
 
-    // Search the machine for the image. Only offered where the host can do it
-    // (Windows Explorer search), and only here: this card is drawn solely while
-    // no firmware is linked.
-    if host.can_search_firmware() {
-        let find =
+    // Choose the image in the system file dialog (File Explorer's Open window on
+    // Windows). Only offered where the host can show one, and only here: this
+    // card is drawn solely while no firmware is linked.
+    if host.can_browse_firmware() {
+        // The dialog runs on its own thread; collect its answer when it comes.
+        if let Some(pick) = state.pending_pick.clone() {
+            match pick.poll() {
+                PickPoll::Pending => {}
+                PickPoll::Cancelled => state.pending_pick = None,
+                PickPoll::Chosen(path) => {
+                    state.pending_pick = None;
+                    state.path_input = path.clone();
+                    state.link_attempted = true;
+                    state.gate_error = None;
+                    host.link_path(&path);
+                }
+            }
+        }
+        let waiting = state.pending_pick.is_some();
+        let browse =
             Rect::from_center_size(pos2(card.center().x, card.top() + 285.0), vec2(300.0, 26.0));
-        if widgets::neon_button(ui, find, "FIND FIRMWARE ON THIS PC", AMBER, false).clicked() {
-            match host.search_for_firmware() {
-                Ok(()) => state.gate_error = None,
+        let label = if waiting {
+            "WAITING FOR FILE EXPLORER..."
+        } else {
+            "BROWSE FOR FIRMWARE..."
+        };
+        if widgets::neon_button(ui, browse, label, AMBER, waiting).clicked() && !waiting {
+            match host.browse_for_firmware() {
+                Ok(pick) => {
+                    state.gate_error = None;
+                    state.pending_pick = Some(pick);
+                }
                 Err(err) => state.gate_error = Some(err),
             }
         }
         painter.text(
             pos2(card.center().x, card.top() + 304.0),
             Align2::CENTER_TOP,
-            format!(
-                "opens Windows search for {}  \u{00b7}  then drop the file here",
-                crate::search::FIRMWARE_SEARCH_PATTERN
-            ),
+            "opens File Explorer  \u{00b7}  choose peak-firmware-*.syx",
             FontId::monospace(7.5),
             with_alpha(DIM, 0.85),
         );
@@ -1645,8 +1666,7 @@ fn gate(ui: &mut Ui, host: &mut dyn PanelHost, state: &mut PanelState, panel: Re
 }
 
 /// Tidy a path typed or pasted into the link field. Explorer's "Copy as path"
-/// wraps the path in double quotes, which is exactly what a user arriving from
-/// the firmware search will paste, and a quoted path never resolves.
+/// wraps the path in double quotes, and a quoted path never resolves.
 fn clean_pasted_path(raw: &str) -> String {
     raw.trim()
         .trim_matches(|c| c == '"' || c == '\'')
@@ -1681,22 +1701,34 @@ pub fn install_style(ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::browse::Pick;
     use crate::host::{FirmwareStamp, LinkStatus};
     use peak_core::Patch;
 
-    /// A host with no firmware, counting how often the search button reached it.
+    /// What the fake file dialog answers when the panel opens it.
+    #[derive(Clone)]
+    enum Dialog {
+        Unsupported,
+        Choose(&'static str),
+        Cancel,
+        Open,
+    }
+
+    /// A host with no firmware that records how the panel used it.
     struct LockedHost {
         patch: Patch,
-        can_search: bool,
-        searches: usize,
+        dialog: Dialog,
+        browses: usize,
+        linked: Vec<String>,
     }
 
     impl LockedHost {
-        fn new(can_search: bool) -> Self {
+        fn new(dialog: Dialog) -> Self {
             Self {
                 patch: Patch::default(),
-                can_search,
-                searches: 0,
+                dialog,
+                browses: 0,
+                linked: Vec::new(),
             }
         }
     }
@@ -1714,14 +1746,23 @@ mod tests {
         fn link_status(&self) -> LinkStatus {
             LinkStatus::Idle
         }
-        fn link_path(&mut self, _path: &str) {}
-        fn link_bytes(&mut self, _name: &str, _bytes: &[u8]) {}
-        fn can_search_firmware(&self) -> bool {
-            self.can_search
+        fn link_path(&mut self, path: &str) {
+            self.linked.push(path.to_string());
         }
-        fn search_for_firmware(&mut self) -> Result<(), String> {
-            self.searches += 1;
-            Ok(())
+        fn link_bytes(&mut self, _name: &str, _bytes: &[u8]) {}
+        fn can_browse_firmware(&self) -> bool {
+            !matches!(self.dialog, Dialog::Unsupported)
+        }
+        fn browse_for_firmware(&mut self) -> Result<Pick, String> {
+            self.browses += 1;
+            let pick = Pick::new();
+            match self.dialog {
+                Dialog::Choose(path) => pick.finish(Some(path.to_string())),
+                Dialog::Cancel => pick.finish(None),
+                // Keep a handle alive, as the dialog thread would.
+                Dialog::Open | Dialog::Unsupported => std::mem::forget(pick.clone()),
+            }
+            Ok(pick)
         }
         fn scope_wave(&self) -> Vec<f32> {
             Vec::new()
@@ -1755,9 +1796,11 @@ mod tests {
         });
     }
 
-    /// Click the centre of the locked card's search button: three frames so the
-    /// widget is laid out, pressed and released the way a real pointer does it.
-    fn click_find_button(host: &mut LockedHost) {
+    /// Click the centre of the locked card's browse button, then run one more
+    /// frame so the panel can collect the dialog's answer. Three frames for the
+    /// click itself so the widget is laid out, pressed and released the way a
+    /// real pointer does it.
+    fn click_browse_button(host: &mut LockedHost) -> PanelState {
         let ctx = egui::Context::default();
         let mut state = PanelState::new();
         // The panel is drawn from (0, 0), so the card is centred on (590, 410)
@@ -1789,20 +1832,44 @@ mod tests {
                 modifiers: Default::default(),
             }],
         );
+        frame(&ctx, host, &mut state, vec![]);
+        state
     }
 
     #[test]
-    fn locked_panel_search_button_reaches_the_host() {
-        let mut host = LockedHost::new(true);
-        click_find_button(&mut host);
-        assert_eq!(host.searches, 1);
+    fn a_file_chosen_in_the_dialog_is_linked() {
+        let path = r"C:\Users\me\Downloads\peak-firmware-2.2-build2108.syx";
+        let mut host = LockedHost::new(Dialog::Choose(path));
+        let state = click_browse_button(&mut host);
+        assert_eq!(host.browses, 1);
+        assert_eq!(host.linked, vec![path.to_string()]);
+        assert_eq!(state.path_input, path);
+        assert!(state.pending_pick.is_none());
     }
 
     #[test]
-    fn search_button_is_absent_when_the_host_cannot_search() {
-        let mut host = LockedHost::new(false);
-        click_find_button(&mut host);
-        assert_eq!(host.searches, 0);
+    fn cancelling_the_dialog_links_nothing() {
+        let mut host = LockedHost::new(Dialog::Cancel);
+        let state = click_browse_button(&mut host);
+        assert_eq!(host.browses, 1);
+        assert!(host.linked.is_empty());
+        assert!(state.pending_pick.is_none());
+    }
+
+    #[test]
+    fn an_open_dialog_blocks_a_second_one() {
+        let mut host = LockedHost::new(Dialog::Open);
+        let state = click_browse_button(&mut host);
+        assert_eq!(host.browses, 1);
+        assert!(state.pending_pick.is_some());
+        assert!(host.linked.is_empty());
+    }
+
+    #[test]
+    fn browse_button_is_absent_when_the_host_cannot_show_a_dialog() {
+        let mut host = LockedHost::new(Dialog::Unsupported);
+        click_browse_button(&mut host);
+        assert_eq!(host.browses, 0);
     }
 
     #[test]

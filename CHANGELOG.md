@@ -9,17 +9,18 @@ First release of the `dysk0net/Peak` fork of ReplicantPeak 1.0.8.
 
 ### Added
 
-- **Find the firmware from the lock screen (Windows).** While no firmware is
-  linked, the "FIRMWARE LINK REQUIRED" card shows a **FIND FIRMWARE ON THIS PC**
-  button. It opens an Explorer search (`search-ms:`) for `peak*.syx`, which
-  matches both `peak-firmware-*.syx` and `peak-fpga-*.syx`, across the user's
-  profile folder. The button is not drawn on other platforms, and never once a
-  firmware image is linked, because the lock card itself is gone by then.
-  - New `peak_ui::search` module; `PanelHost` gains `can_search_firmware()` and
-    `search_for_firmware()` with default implementations, so existing hosts
-    need no change.
-  - Explorer is started by absolute path (`%SystemRoot%\explorer.exe`), not by
-    name, so a plugin hosted in a DAW never resolves it from the host's folder.
+- **Pick the firmware in File Explorer (Windows).** While no firmware is linked,
+  the "FIRMWARE LINK REQUIRED" card shows a **BROWSE FOR FIRMWARE...** button. It
+  opens the standard File Explorer "Open" dialog, filtered to `.syx` files and
+  starting in the user's Downloads folder; the chosen file is linked exactly as
+  if its path had been typed into the field. Cancelling the dialog does nothing.
+  The button is not drawn on other platforms, and never once a firmware image is
+  linked, because the lock card itself is gone by then.
+  - New `peak_ui::browse` module (uses the `rfd` crate, Windows only);
+    `PanelHost` gains `can_browse_firmware()` and `browse_for_firmware()` with
+    default implementations, so existing hosts need no change.
+  - The dialog runs on its own thread, so a plugin editor never blocks the
+    host's UI thread while it is open.
 - **VST3 workflow** (`.github/workflows/vst3.yml`): builds the Windows VST3 on
   every push to `main` and on demand, and uploads it as a zip artifact.
 

@@ -72,15 +72,16 @@ pub trait PanelHost {
     /// Same, for a file dropped onto the panel.
     fn link_bytes(&mut self, name: &str, bytes: &[u8]);
 
-    /// Whether this host can offer to search the machine for the firmware
-    /// image. The locked panel only draws its search button when this is true.
-    fn can_search_firmware(&self) -> bool {
-        crate::search::search_supported()
+    /// Whether this host can show a file dialog for choosing the firmware
+    /// image. The locked panel only draws its browse button when this is true.
+    fn can_browse_firmware(&self) -> bool {
+        crate::browse::browse_supported()
     }
-    /// Open the operating system's file search for the firmware image (a
-    /// Windows Explorer search window). Must not block.
-    fn search_for_firmware(&mut self) -> Result<(), String> {
-        crate::search::open_firmware_search()
+    /// Open the system file dialog (File Explorer's Open window on Windows).
+    /// Must not block: the dialog runs elsewhere and the panel polls the
+    /// returned [`Pick`](crate::browse::Pick) for the chosen path.
+    fn browse_for_firmware(&mut self) -> Result<crate::browse::Pick, String> {
+        crate::browse::open_firmware_dialog()
     }
 
     /// One cycle of the current oscillator shape, for the scope.
@@ -158,6 +159,8 @@ pub struct PanelState {
     pub preset_msg: Option<String>,
     pub import_syx_open: bool,
     pub syx_path_input: String,
+    /// File dialog that is open right now, if any.
+    pub pending_pick: Option<crate::browse::Pick>,
 }
 
 impl PanelState {

@@ -10,3 +10,6 @@ repository.workspace = true
 peak-core = { workspace = true }
 egui = { workspace = true }
 serde = { workspace = true }
+
+[target."cfg(windows)".dependencies]
+rfd = { version = "0.18", default-features = false }

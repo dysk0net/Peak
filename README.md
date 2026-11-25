@@ -15,7 +15,7 @@ ARM Cortex-M4 microcontroller code via an integrated Unicorn-based hardware
 emulator that drives the authentic 256×64 OLED display panel, voice activity LEDs,
 and parameter states.
 
-- **Status**: v1.1.0, Standalone Synthesizer Application, VST3 & CLAP bundles, persistent firmware link, one-click Windows firmware search.
+- **Status**: v1.1.0, Standalone Synthesizer Application, VST3 & CLAP bundles, persistent firmware link, a File Explorer "Browse" button on Windows.
 - **Fork**: this is a fork of [DanimanX/ReplicantPeak](https://github.com/DanimanX/ReplicantPeak) (MIT, copyright notice kept in [LICENSE](LICENSE)). What this fork adds is listed in the [changelog](CHANGELOG.md).
 - **Demo Video**: [Cyberpunk / Blade Runner Video Demonstration](assets/cyberpunk_blade_runner_demo.mp4) (46s Full HD).
 - **License**: MIT for the code. The firmware is not included and not covered by
@@ -222,9 +222,9 @@ it:
 - drag the file onto the panel, or
 - type or paste its path into the lock screen field (the quotes Windows adds with
   "Copy as path" are stripped), or
-- on Windows, press **FIND FIRMWARE ON THIS PC**: it opens an Explorer search for
-  `peak*.syx` across your user folder, and you then drag the file it finds onto the
-  panel or paste its path, or
+- on Windows, press **BROWSE FOR FIRMWARE...**: it opens the File Explorer "Open"
+  window (filtered to `.syx`, starting in your Downloads folder), and the file you
+  pick is linked straight away, or
 - set `PEAK_FIRMWARE=/path/to/firmware.syx` for the standalone panel.
 
 MIDI note input is declared by the plugin (`MidiConfig::Basic`), so hosts

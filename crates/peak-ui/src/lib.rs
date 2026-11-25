@@ -4,9 +4,9 @@
 //! `panel::show` paints the whole instrument into a `Ui`; the host trait in
 //! [`host`] is the only thing the panel knows about the outside world.
 
+pub mod browse;
 pub mod host;
 pub mod panel;
-pub mod search;
 pub mod theme;
 pub mod widgets;
 
