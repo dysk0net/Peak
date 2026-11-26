@@ -5,7 +5,7 @@
 //! from the host every frame, so the panel has no state of its own beyond the
 //! drag bookkeeping and the firmware field.
 
-use crate::browse::PickPoll;
+use crate::browse::{BrowseKind, PickPoll};
 use crate::host::{Accent, LinkStatus, PanelHost, PanelState};
 use crate::theme::*;
 use crate::widgets;
@@ -305,8 +305,14 @@ fn preset_bar(ui: &mut Ui, host: &mut dyn PanelHost, state: &mut PanelState, inn
     let enabled = count > 0 && host.is_live();
     let prev_clicked = widgets::neon_button(ui, prev, "<", CYAN, false).clicked();
     let next_clicked = widgets::neon_button(ui, next, ">", CYAN, false).clicked();
-    let import_clicked =
-        widgets::neon_button(ui, import_btn, "IMPORT .SYX", CYAN, state.import_syx_open).clicked();
+    let import_clicked = widgets::neon_button(
+        ui,
+        import_btn,
+        "IMPORT .SYX",
+        CYAN,
+        state.import_syx_open || state.pending_import_pick.is_some(),
+    )
+    .clicked();
     let store_clicked = widgets::neon_button(ui, store, "STORE", AMBER, false).clicked();
 
     if prev_clicked && enabled {
@@ -319,7 +325,27 @@ fn preset_bar(ui: &mut Ui, host: &mut dyn PanelHost, state: &mut PanelState, inn
         host.select_preset(target);
         state.preset_msg = None;
     }
-    if import_clicked {
+    // Where the host can show a file dialog (File Explorer's Open window on
+    // Windows) the button goes straight to it. Elsewhere the old path box stays.
+    if host.can_browse_files() {
+        if import_clicked && state.pending_import_pick.is_none() {
+            match host.browse_for_file(BrowseKind::Preset) {
+                Ok(pick) => state.pending_import_pick = Some(pick),
+                Err(err) => state.preset_msg = Some(format!("IMPORT ERR: {err}").to_uppercase()),
+            }
+        }
+        // The dialog runs on its own thread; collect its answer when it comes.
+        if let Some(pick) = state.pending_import_pick.clone() {
+            match pick.poll() {
+                PickPoll::Pending => {}
+                PickPoll::Cancelled => state.pending_import_pick = None,
+                PickPoll::Chosen(path) => {
+                    state.pending_import_pick = None;
+                    state.preset_msg = Some(import_message(import_syx_file(host, &path)));
+                }
+            }
+        }
+    } else if import_clicked {
         state.import_syx_open = !state.import_syx_open;
         if state.syx_path_input.is_empty() {
             state.syx_path_input = "PeakDist03/TnTDistCareFULL.syx".to_string();
@@ -360,21 +386,12 @@ fn preset_bar(ui: &mut Ui, host: &mut dyn PanelHost, state: &mut PanelState, inn
                 .hint_text("Path to .syx preset..."),
         );
         if widgets::neon_button(ui, load_btn_rect, "LOAD", CYAN, false).clicked() {
-            let path_str = state.syx_path_input.trim();
-            match std::fs::read(path_str) {
-                Ok(bytes) => match host.import_syx(&bytes) {
-                    Ok(name) => {
-                        state.preset_msg = Some(format!("IMPORTED {name}").to_uppercase());
-                        state.import_syx_open = false;
-                    }
-                    Err(err) => {
-                        state.preset_msg = Some(format!("ERR: {err}").to_uppercase());
-                    }
-                },
-                Err(e) => {
-                    state.preset_msg = Some(format!("FILE ERR: {e}").to_uppercase());
-                }
+            let path = clean_pasted_path(&state.syx_path_input);
+            let result = import_syx_file(host, &path);
+            if result.is_ok() {
+                state.import_syx_open = false;
             }
+            state.preset_msg = Some(import_message(result));
         }
     }
 
@@ -1614,7 +1631,7 @@ fn gate(ui: &mut Ui, host: &mut dyn PanelHost, state: &mut PanelState, panel: Re
     // Choose the image in the system file dialog (File Explorer's Open window on
     // Windows). Only offered where the host can show one, and only here: this
     // card is drawn solely while no firmware is linked.
-    if host.can_browse_firmware() {
+    if host.can_browse_files() {
         // The dialog runs on its own thread; collect its answer when it comes.
         if let Some(pick) = state.pending_pick.clone() {
             match pick.poll() {
@@ -1638,7 +1655,7 @@ fn gate(ui: &mut Ui, host: &mut dyn PanelHost, state: &mut PanelState, panel: Re
             "BROWSE FOR FIRMWARE..."
         };
         if widgets::neon_button(ui, browse, label, AMBER, waiting).clicked() && !waiting {
-            match host.browse_for_firmware() {
+            match host.browse_for_file(BrowseKind::Firmware) {
                 Ok(pick) => {
                     state.gate_error = None;
                     state.pending_pick = Some(pick);
@@ -1674,6 +1691,22 @@ fn clean_pasted_path(raw: &str) -> String {
         .to_string()
 }
 
+/// Read the `.syx` at `path` and hand it to the host. `Ok` holds the imported
+/// patch name; `Err` holds a ready-to-show reason, prefixed by what failed.
+fn import_syx_file(host: &mut dyn PanelHost, path: &str) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("FILE ERR: {e}"))?;
+    host.import_syx(&bytes).map_err(|e| format!("ERR: {e}"))
+}
+
+/// The status line for the outcome of [`import_syx_file`].
+fn import_message(result: Result<String, String>) -> String {
+    match result {
+        Ok(name) => format!("IMPORTED {name}"),
+        Err(reason) => reason,
+    }
+    .to_uppercase()
+}
+
 /// Draw the panel at a fixed size and return the size it used, so hosts can set
 /// their window/bounds from one source of truth.
 pub fn preferred_size() -> egui::Vec2 {
@@ -1703,37 +1736,50 @@ mod tests {
     use super::*;
     use crate::browse::Pick;
     use crate::host::{FirmwareStamp, LinkStatus};
+    use peak_core::firmware::FwKind;
     use peak_core::Patch;
 
     /// What the fake file dialog answers when the panel opens it.
     #[derive(Clone)]
     enum Dialog {
         Unsupported,
-        Choose(&'static str),
+        Choose(String),
         Cancel,
         Open,
     }
 
-    /// A host with no firmware that records how the panel used it.
-    struct LockedHost {
+    /// A host that records how the panel used it.
+    struct TestHost {
         patch: Patch,
+        has_firmware: bool,
         dialog: Dialog,
-        browses: usize,
+        browses: Vec<BrowseKind>,
         linked: Vec<String>,
+        imported: Vec<Vec<u8>>,
     }
 
-    impl LockedHost {
-        fn new(dialog: Dialog) -> Self {
+    impl TestHost {
+        fn new(has_firmware: bool, dialog: Dialog) -> Self {
             Self {
                 patch: Patch::default(),
+                has_firmware,
                 dialog,
-                browses: 0,
+                browses: Vec::new(),
                 linked: Vec::new(),
+                imported: Vec::new(),
             }
+        }
+        /// No firmware linked: the panel shows the lock card.
+        fn locked(dialog: Dialog) -> Self {
+            Self::new(false, dialog)
+        }
+        /// Firmware linked: the full panel with its preset bar.
+        fn live(dialog: Dialog) -> Self {
+            Self::new(true, dialog)
         }
     }
 
-    impl PanelHost for LockedHost {
+    impl PanelHost for TestHost {
         fn value(&self, param: P) -> f32 {
             self.patch.get(param)
         }
@@ -1741,7 +1787,15 @@ mod tests {
             self.patch.set(param, value);
         }
         fn firmware(&self) -> Option<FirmwareStamp> {
-            None
+            self.has_firmware.then(|| FirmwareStamp {
+                version_label: "2.2".into(),
+                sha_short: "abc1234".into(),
+                kind: FwKind::Firmware,
+                verified: true,
+                messages: 1,
+                bytes: 1,
+                path: None,
+            })
         }
         fn link_status(&self) -> LinkStatus {
             LinkStatus::Idle
@@ -1750,19 +1804,23 @@ mod tests {
             self.linked.push(path.to_string());
         }
         fn link_bytes(&mut self, _name: &str, _bytes: &[u8]) {}
-        fn can_browse_firmware(&self) -> bool {
+        fn can_browse_files(&self) -> bool {
             !matches!(self.dialog, Dialog::Unsupported)
         }
-        fn browse_for_firmware(&mut self) -> Result<Pick, String> {
-            self.browses += 1;
+        fn browse_for_file(&mut self, kind: BrowseKind) -> Result<Pick, String> {
+            self.browses.push(kind);
             let pick = Pick::new();
-            match self.dialog {
-                Dialog::Choose(path) => pick.finish(Some(path.to_string())),
+            match &self.dialog {
+                Dialog::Choose(path) => pick.finish(Some(path.clone())),
                 Dialog::Cancel => pick.finish(None),
                 // Keep a handle alive, as the dialog thread would.
                 Dialog::Open | Dialog::Unsupported => std::mem::forget(pick.clone()),
             }
             Ok(pick)
+        }
+        fn import_syx(&mut self, data: &[u8]) -> Result<String, String> {
+            self.imported.push(data.to_vec());
+            Ok("Test Patch".to_string())
         }
         fn scope_wave(&self) -> Vec<f32> {
             Vec::new()
@@ -1780,33 +1838,48 @@ mod tests {
 
     fn frame(
         ctx: &egui::Context,
-        host: &mut LockedHost,
+        host: &mut TestHost,
         state: &mut PanelState,
         events: Vec<egui::Event>,
-    ) {
+    ) -> egui::FullOutput {
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1180.0, 820.0))),
             events,
             ..Default::default()
         };
-        let _ = ctx.run(input, |ctx| {
+        ctx.run(input, |ctx| {
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
                 .show(ctx, |ui| show(ui, host, state));
-        });
+        })
     }
 
-    /// Click the centre of the locked card's browse button, then run one more
-    /// frame so the panel can collect the dialog's answer. Three frames for the
-    /// click itself so the widget is laid out, pressed and released the way a
-    /// real pointer does it.
-    fn click_browse_button(host: &mut LockedHost) -> PanelState {
+    /// Centre of the first text shape that paints exactly `label`.
+    fn label_centre(output: &egui::FullOutput, label: &str) -> Option<egui::Pos2> {
+        fn find(shape: &egui::Shape, label: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::Shape::Text(text) if text.galley.text() == label => {
+                    Some(text.pos + text.galley.rect.center().to_vec2())
+                }
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| find(s, label)),
+                _ => None,
+            }
+        }
+        output
+            .shapes
+            .iter()
+            .find_map(|clipped| find(&clipped.shape, label))
+    }
+
+    /// Click the button labelled `label`, then run one more frame so the panel
+    /// can collect the dialog's answer. `None` when no such button is on screen.
+    /// The click takes three frames so the widget is laid out, pressed and
+    /// released the way a real pointer does it.
+    fn click_button(host: &mut TestHost, label: &str) -> Option<PanelState> {
         let ctx = egui::Context::default();
         let mut state = PanelState::new();
-        // The panel is drawn from (0, 0), so the card is centred on (590, 410)
-        // and the button sits 285 px below the card's top edge (410 - 180).
-        let at = pos2(590.0, 230.0 + 285.0);
-        frame(&ctx, host, &mut state, vec![]);
+        let first = frame(&ctx, host, &mut state, vec![]);
+        let at = label_centre(&first, label)?;
         frame(
             &ctx,
             host,
@@ -1833,43 +1906,128 @@ mod tests {
             }],
         );
         frame(&ctx, host, &mut state, vec![]);
-        state
+        Some(state)
     }
 
+    /// A small `.syx` file on disk that is removed again when dropped.
+    struct TempSyx(std::path::PathBuf);
+
+    impl TempSyx {
+        fn new(tag: &str, bytes: &[u8]) -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("peak-panel-test-{}-{tag}.syx", std::process::id()));
+            std::fs::write(&path, bytes).unwrap();
+            Self(path)
+        }
+        fn path(&self) -> String {
+            self.0.to_string_lossy().into_owned()
+        }
+    }
+
+    impl Drop for TempSyx {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    const BROWSE: &str = "BROWSE FOR FIRMWARE...";
+    const IMPORT: &str = "IMPORT .SYX";
+
+    // ---- firmware lock screen -------------------------------------------
+
     #[test]
-    fn a_file_chosen_in_the_dialog_is_linked() {
+    fn a_firmware_chosen_in_the_dialog_is_linked() {
         let path = r"C:\Users\me\Downloads\peak-firmware-2.2-build2108.syx";
-        let mut host = LockedHost::new(Dialog::Choose(path));
-        let state = click_browse_button(&mut host);
-        assert_eq!(host.browses, 1);
+        let mut host = TestHost::locked(Dialog::Choose(path.into()));
+        let state = click_button(&mut host, BROWSE).expect("browse button is drawn");
+        assert_eq!(host.browses, vec![BrowseKind::Firmware]);
         assert_eq!(host.linked, vec![path.to_string()]);
         assert_eq!(state.path_input, path);
         assert!(state.pending_pick.is_none());
     }
 
     #[test]
-    fn cancelling_the_dialog_links_nothing() {
-        let mut host = LockedHost::new(Dialog::Cancel);
-        let state = click_browse_button(&mut host);
-        assert_eq!(host.browses, 1);
+    fn cancelling_the_firmware_dialog_links_nothing() {
+        let mut host = TestHost::locked(Dialog::Cancel);
+        let state = click_button(&mut host, BROWSE).expect("browse button is drawn");
+        assert_eq!(host.browses.len(), 1);
         assert!(host.linked.is_empty());
         assert!(state.pending_pick.is_none());
     }
 
     #[test]
-    fn an_open_dialog_blocks_a_second_one() {
-        let mut host = LockedHost::new(Dialog::Open);
-        let state = click_browse_button(&mut host);
-        assert_eq!(host.browses, 1);
+    fn an_open_firmware_dialog_stays_pending() {
+        let mut host = TestHost::locked(Dialog::Open);
+        let state = click_button(&mut host, BROWSE).expect("browse button is drawn");
+        assert_eq!(host.browses.len(), 1);
         assert!(state.pending_pick.is_some());
         assert!(host.linked.is_empty());
     }
 
     #[test]
     fn browse_button_is_absent_when_the_host_cannot_show_a_dialog() {
-        let mut host = LockedHost::new(Dialog::Unsupported);
-        click_browse_button(&mut host);
-        assert_eq!(host.browses, 0);
+        let mut host = TestHost::locked(Dialog::Unsupported);
+        assert!(click_button(&mut host, BROWSE).is_none());
+        assert!(host.browses.is_empty());
+    }
+
+    // ---- preset import --------------------------------------------------
+
+    #[test]
+    fn import_syx_opens_the_dialog_and_imports_the_chosen_file() {
+        let file = TempSyx::new("chosen", &[0xF0, 0x00, 0x20, 0x29, 0xF7]);
+        let mut host = TestHost::live(Dialog::Choose(file.path()));
+        let state = click_button(&mut host, IMPORT).expect("import button is drawn");
+        assert_eq!(host.browses, vec![BrowseKind::Preset]);
+        assert_eq!(host.imported, vec![vec![0xF0, 0x00, 0x20, 0x29, 0xF7]]);
+        assert_eq!(state.preset_msg.as_deref(), Some("IMPORTED TEST PATCH"));
+        assert!(state.pending_import_pick.is_none());
+        // The old path box stays closed: the dialog replaced it.
+        assert!(!state.import_syx_open);
+    }
+
+    #[test]
+    fn cancelling_the_import_dialog_imports_nothing() {
+        let mut host = TestHost::live(Dialog::Cancel);
+        let state = click_button(&mut host, IMPORT).expect("import button is drawn");
+        assert_eq!(host.browses, vec![BrowseKind::Preset]);
+        assert!(host.imported.is_empty());
+        assert_eq!(state.preset_msg, None);
+        assert!(state.pending_import_pick.is_none());
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_read_is_reported_not_imported() {
+        let mut host = TestHost::live(Dialog::Choose("/definitely/not/here.syx".into()));
+        let state = click_button(&mut host, IMPORT).expect("import button is drawn");
+        assert!(host.imported.is_empty());
+        let msg = state.preset_msg.expect("a status message");
+        assert!(msg.starts_with("FILE ERR"), "{msg}");
+    }
+
+    #[test]
+    fn an_open_import_dialog_stays_pending() {
+        let mut host = TestHost::live(Dialog::Open);
+        let state = click_button(&mut host, IMPORT).expect("import button is drawn");
+        assert_eq!(host.browses.len(), 1);
+        assert!(state.pending_import_pick.is_some());
+        assert!(host.imported.is_empty());
+    }
+
+    #[test]
+    fn import_syx_falls_back_to_the_path_box_without_a_dialog() {
+        let mut host = TestHost::live(Dialog::Unsupported);
+        let state = click_button(&mut host, IMPORT).expect("import button is drawn");
+        assert!(host.browses.is_empty());
+        assert!(state.import_syx_open);
+    }
+
+    // ---- helpers --------------------------------------------------------
+
+    #[test]
+    fn import_messages_are_shouted_like_the_rest_of_the_status_line() {
+        assert_eq!(import_message(Ok("Warm Pad".into())), "IMPORTED WARM PAD");
+        assert_eq!(import_message(Err("ERR: bad".into())), "ERR: BAD");
     }
 
     #[test]

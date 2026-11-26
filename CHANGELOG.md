@@ -17,10 +17,17 @@ First release of the `dysk0net/Peak` fork of ReplicantPeak 1.0.8.
   The button is not drawn on other platforms, and never once a firmware image is
   linked, because the lock card itself is gone by then.
   - New `peak_ui::browse` module (uses the `rfd` crate, Windows only);
-    `PanelHost` gains `can_browse_firmware()` and `browse_for_firmware()` with
+    `PanelHost` gains `can_browse_files()` and `browse_for_file(kind)` with
     default implementations, so existing hosts need no change.
   - The dialog runs on its own thread, so a plugin editor never blocks the
     host's UI thread while it is open.
+- **IMPORT .SYX opens the same File Explorer dialog (Windows).** The in-display
+  button used to open a text box pre-filled with a relative path that only
+  resolved when a `PeakDist03` folder happened to be next to the running
+  program, the same problem the firmware link had. It now opens the standard Open window (filtered to `.syx`; the
+  last folder is remembered by Windows) and imports the chosen file at once.
+  Cancelling does nothing; a file that cannot be read shows `FILE ERR` in the
+  status line. Platforms without a dialog keep the path box.
 - **VST3 workflow** (`.github/workflows/vst3.yml`): builds the Windows VST3 on
   every push to `main` and on demand, and uploads it as a zip artifact.
 

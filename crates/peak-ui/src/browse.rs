@@ -1,9 +1,10 @@
-//! "Pick the firmware in File Explorer" for the locked panel.
+//! "Pick a file in File Explorer" for the firmware link and the preset import.
 //!
-//! On Windows the button opens the standard Open dialog (the File Explorer
-//! picker), filtered to `.syx` files and starting in the user's Downloads
-//! folder, where the Novation download normally lands. The chosen path is then
-//! linked exactly as if it had been typed into the path field.
+//! On Windows the buttons open the standard Open dialog (the File Explorer
+//! picker), filtered to `.syx` files. The firmware picker starts in the user's
+//! Downloads folder, where the Novation download normally lands; the preset
+//! import leaves the start folder to Windows, which remembers the last one. The
+//! chosen path is then used exactly as if it had been typed into a path field.
 //!
 //! The dialog is modal and blocks until the user answers, so it runs on its own
 //! thread; a plugin editor must never block the host's UI thread. The panel
@@ -12,12 +13,44 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-/// Label for the file-type filter in the dialog.
-pub const FILTER_NAME: &str = "Novation Peak firmware (*.syx)";
-/// Extensions the dialog offers. Both the firmware and the FPGA image are `.syx`.
+/// Extensions the dialogs offer. Firmware, FPGA images and presets are all `.syx`.
 pub const FILTER_EXTENSIONS: &[&str] = &["syx"];
 
-/// True on platforms where [`open_firmware_dialog`] can show a dialog. The panel
+/// What the file dialog is being opened for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BrowseKind {
+    /// The Novation Peak firmware or FPGA image.
+    Firmware,
+    /// A Peak preset or bank to import.
+    Preset,
+}
+
+impl BrowseKind {
+    /// Title bar text of the dialog.
+    pub fn title(self) -> &'static str {
+        match self {
+            BrowseKind::Firmware => "Select the Novation Peak firmware (.syx)",
+            BrowseKind::Preset => "Import a Peak preset (.syx)",
+        }
+    }
+
+    /// Label of the file-type filter.
+    pub fn filter_name(self) -> &'static str {
+        match self {
+            BrowseKind::Firmware => "Novation Peak firmware (*.syx)",
+            BrowseKind::Preset => "Peak presets (*.syx)",
+        }
+    }
+
+    /// Whether the dialog should open in Downloads. Only the firmware does:
+    /// presets live wherever the user keeps them, so Windows' own memory of the
+    /// last folder serves better.
+    pub fn starts_in_downloads(self) -> bool {
+        matches!(self, BrowseKind::Firmware)
+    }
+}
+
+/// True on platforms where [`open_file_dialog`] can show a dialog. The panel
 /// hides the button elsewhere instead of offering one that always fails.
 pub const fn browse_supported() -> bool {
     cfg!(windows)
@@ -77,20 +110,22 @@ pub fn downloads_dir(profile: &Path) -> Option<PathBuf> {
 
 /// Show the file dialog on a background thread and return at once.
 #[cfg(windows)]
-pub fn open_firmware_dialog() -> Result<Pick, String> {
+pub fn open_file_dialog(kind: BrowseKind) -> Result<Pick, String> {
     let pick = Pick::new();
     let answer = pick.clone();
     std::thread::Builder::new()
         .name("peak-firmware-dialog".into())
         .spawn(move || {
             let mut dialog = rfd::FileDialog::new()
-                .set_title("Select the Novation Peak firmware (.syx)")
-                .add_filter(FILTER_NAME, FILTER_EXTENSIONS);
-            if let Some(dir) = std::env::var_os("USERPROFILE")
-                .map(PathBuf::from)
-                .and_then(|profile| downloads_dir(&profile))
-            {
-                dialog = dialog.set_directory(dir);
+                .set_title(kind.title())
+                .add_filter(kind.filter_name(), FILTER_EXTENSIONS);
+            if kind.starts_in_downloads() {
+                if let Some(dir) = std::env::var_os("USERPROFILE")
+                    .map(PathBuf::from)
+                    .and_then(|profile| downloads_dir(&profile))
+                {
+                    dialog = dialog.set_directory(dir);
+                }
             }
             answer.finish(
                 dialog
@@ -104,7 +139,7 @@ pub fn open_firmware_dialog() -> Result<Pick, String> {
 
 /// There is no dialog here; see [`browse_supported`].
 #[cfg(not(windows))]
-pub fn open_firmware_dialog() -> Result<Pick, String> {
+pub fn open_file_dialog(_kind: BrowseKind) -> Result<Pick, String> {
     Err("the file dialog is only available on Windows".to_string())
 }
 
@@ -159,14 +194,30 @@ mod tests {
     }
 
     #[test]
-    fn filter_matches_the_images_the_linker_accepts() {
+    fn filter_matches_the_files_the_panel_accepts() {
         assert_eq!(FILTER_EXTENSIONS, ["syx"]);
+    }
+
+    #[test]
+    fn each_kind_has_its_own_title_and_filter() {
+        assert_ne!(BrowseKind::Firmware.title(), BrowseKind::Preset.title());
+        assert_ne!(
+            BrowseKind::Firmware.filter_name(),
+            BrowseKind::Preset.filter_name()
+        );
+        assert!(BrowseKind::Preset.filter_name().contains("*.syx"));
+    }
+
+    #[test]
+    fn only_the_firmware_dialog_starts_in_downloads() {
+        assert!(BrowseKind::Firmware.starts_in_downloads());
+        assert!(!BrowseKind::Preset.starts_in_downloads());
     }
 
     #[cfg(not(windows))]
     #[test]
     fn other_platforms_report_unsupported() {
         assert!(!browse_supported());
-        assert!(open_firmware_dialog().is_err());
+        assert!(open_file_dialog(BrowseKind::Preset).is_err());
     }
 }

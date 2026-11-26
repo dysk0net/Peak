@@ -30,7 +30,9 @@ and parameter states.
     and white centers as notes sound.
   - Dedicated front panel **VOLUME** knob (`-48.0 dB .. +6.0 dB`).
   - Native **SysEx Preset Import** (`.syx`): load custom patches via drag & drop or the
-    in-display `IMPORT .SYX` button, bundled with the 10 Montfrooij `PeakDist03` presets.
+    in-display `IMPORT .SYX` button (on Windows it opens the File Explorer "Open"
+    window; elsewhere it shows a path box), bundled with the 10 Montfrooij
+    `PeakDist03` presets.
 - **Active ARM Cortex-M4 Firmware Emulation:**
   - Microcontroller emulation harness running the genuine firmware binary.
   - STM32F4 MMIO virtual peripheral stubs for RCC, PWR, UART, GPIO, SPI, and SysTick.

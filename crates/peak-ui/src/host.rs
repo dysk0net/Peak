@@ -72,16 +72,19 @@ pub trait PanelHost {
     /// Same, for a file dropped onto the panel.
     fn link_bytes(&mut self, name: &str, bytes: &[u8]);
 
-    /// Whether this host can show a file dialog for choosing the firmware
-    /// image. The locked panel only draws its browse button when this is true.
-    fn can_browse_firmware(&self) -> bool {
+    /// Whether this host can show a file dialog. The panel only draws its
+    /// browse button, and sends Import .syx to the dialog, when this is true.
+    fn can_browse_files(&self) -> bool {
         crate::browse::browse_supported()
     }
     /// Open the system file dialog (File Explorer's Open window on Windows).
     /// Must not block: the dialog runs elsewhere and the panel polls the
     /// returned [`Pick`](crate::browse::Pick) for the chosen path.
-    fn browse_for_firmware(&mut self) -> Result<crate::browse::Pick, String> {
-        crate::browse::open_firmware_dialog()
+    fn browse_for_file(
+        &mut self,
+        kind: crate::browse::BrowseKind,
+    ) -> Result<crate::browse::Pick, String> {
+        crate::browse::open_file_dialog(kind)
     }
 
     /// One cycle of the current oscillator shape, for the scope.
@@ -159,8 +162,10 @@ pub struct PanelState {
     pub preset_msg: Option<String>,
     pub import_syx_open: bool,
     pub syx_path_input: String,
-    /// File dialog that is open right now, if any.
+    /// Firmware file dialog that is open right now, if any.
     pub pending_pick: Option<crate::browse::Pick>,
+    /// Preset import file dialog that is open right now, if any.
+    pub pending_import_pick: Option<crate::browse::Pick>,
 }
 
 impl PanelState {
